@@ -94,7 +94,7 @@ Item {
                 var item = source[i] || ({});
                 displayModel.append({
                     id: String(item.id || (item.group || "") + "/" + (item.project || "")),
-                    group: String(item.group || "Ungrouped"),
+                    group: String(item.group || ""),
                     project: String(item.project || item.label || "Untitled project"),
                     opens: String(item.opens || item.source || ""),
                     deletable: item.deletable === true,
@@ -396,7 +396,7 @@ Item {
                                         anchors.right: opensLabel.visible ? opensLabel.left : parent.right
                                         anchors.rightMargin: opensLabel.visible ? Style.spacing.xs : 0
                                         anchors.verticalCenter: parent.verticalCenter
-                                        text: row.group + " / " + row.project
+                                        text: row.group.length > 0 ? row.group + " / " + row.project : row.project
                                         color: row.current ? root.selectedText : root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall

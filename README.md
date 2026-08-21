@@ -1,6 +1,6 @@
 # Workspace Opener
 
-An Omarchy menu plugin for opening projects at `~/Projects/<group>/<project>`.
+An Omarchy menu plugin for opening configurable project folders. By default it scans `~/Projects/<group>/<project>`.
 
 ## Install
 
@@ -34,11 +34,14 @@ Create `$XDG_CONFIG_HOME/omarchy/workspace-opener/config.json` (normally `~/.con
   "version": 1,
   "editor": "default",
   "editors": ["default", "code", "cursor"],
+  "folders": ["~/Projects/*/*", "~/.omarchy-config"],
   "dimBackdrop": true
 }
 ```
 
 `editor` selects the initially active editor. `editors` is the ordered set Ctrl+E cycles; use one item to disable switching. Valid values are `default` (the default, launched through `omarchy-launch-editor`), `code`, and `cursor`. The displayed default label resolves from `omarchy-default-editor`: for example, VS Code, Cursor, or Neovim. Duplicate resolved choices are hidden. `dimBackdrop` defaults to `false`.
+
+`folders` is an ordered list of project paths. A glob expands to matching project folders, so `~/Projects/*/*` keeps the default two-level layout. A literal path is itself one project, including explicit hidden folders such as `~/.omarchy-config`. Omit `folders` to keep the default `~/Projects/*/*` scan.
 
 Operational usage state is stored separately at `$XDG_STATE_HOME/omarchy/workspace-opener/history.json` (normally `~/.local/state/omarchy/workspace-opener/history.json`). Python 3 is the only runtime dependency; it is used from the standard library only.
 

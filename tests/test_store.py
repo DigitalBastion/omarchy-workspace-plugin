@@ -54,12 +54,45 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(response["preferences"]["editor"], "default")
         self.assertGreaterEqual(len(response["editorChoices"]), 1)
         self.assertEqual(response["editorChoices"][0]["id"], "default")
-        items = {item["id"]: item for item in response["projects"]}
+        items = {item["legacyId"]: item for item in response["projects"]}
         self.assertEqual(set(items), {"Acme/Backend", "Acme/Website", "DigitalBastion/Plugin"})
         self.assertEqual(items["Acme/Backend"]["launchPath"], str(split))
         self.assertEqual(items["DigitalBastion/Plugin"]["launchPath"], str(exact / "src"))
         self.assertEqual(items["DigitalBastion/Plugin"]["opens"], "src")
         self.assertEqual(items["Acme/Website"]["launchPath"], str(plain))
+
+    def test_folders_support_globbed_projects_and_literal_hidden_folder(self):
+        project = self.project("Acme", "Backend")
+        config_root = self.home / ".omarchy-config"
+        config_root.mkdir()
+        config = self.home / "config" / "omarchy" / "workspace-opener" / "config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({
+            "version": 1,
+            "folders": ["~/Projects/*/*", "~/.omarchy-config"],
+        }), encoding="utf-8")
+
+        _, response = self.invoke("snapshot")
+        by_path = {item["rootPath"]: item for item in response["projects"]}
+        self.assertEqual(by_path[str(project)]["group"], "Acme")
+        self.assertEqual(by_path[str(config_root)]["group"], "")
+        self.assertEqual(by_path[str(config_root)]["project"], ".omarchy-config")
+        self.assertNotEqual(by_path[str(project)]["id"], by_path[str(config_root)]["id"])
+
+    def test_snapshot_migrates_legacy_project_history(self):
+        project = self.project("Acme", "Backend")
+        history = self.home / "state" / "omarchy" / "workspace-opener" / "history.json"
+        history.parent.mkdir(parents=True)
+        history.write_text(json.dumps({
+            "version": 1,
+            "sequence": 1,
+            "entries": {"Acme/Backend": {"count": 1, "lastLaunchSeq": 1}},
+        }), encoding="utf-8")
+
+        _, response = self.invoke("snapshot")
+        entry_id = "path:" + str(project)
+        self.assertIn(entry_id, response["history"]["entries"])
+        self.assertNotIn("Acme/Backend", response["history"]["entries"])
 
     def test_history_dismissal_is_section_specific_and_launch_restores_it(self):
         self.project("Acme", "Backend")

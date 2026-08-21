@@ -6,6 +6,7 @@ stdout. Diagnostics are intentionally reserved for stderr.
 """
 
 import fcntl
+import glob
 import json
 import os
 from pathlib import Path
@@ -83,43 +84,58 @@ def locked_update(path, mutate):
         return result, ""
 
 
-def scan_projects():
-    base = Path(os.environ.get("WORKSPACE_OPENER_PROJECTS") or Path.home() / "Projects")
-    projects = []
+def configured_folders(preferences):
+    legacy_base = os.path.abspath(os.environ.get("WORKSPACE_OPENER_PROJECTS") or str(Path.home() / "Projects"))
+    raw = preferences.get("folders")
+    if raw is None:
+        return [legacy_base + "/*/*"], legacy_base
+    if not isinstance(raw, list) or not raw or not all(isinstance(path, str) and path.strip() for path in raw):
+        raise ValueError("'folders' must be a non-empty list of paths")
+    return [os.path.expanduser(path) for path in raw], legacy_base
+
+
+def split_layout(path):
     try:
-        groups = list(os.scandir(base))
+        visible = [entry for entry in os.scandir(path) if not entry.name.startswith(".")]
     except OSError:
-        return projects
-    for group in groups:
-        if group.name.startswith(".") or group.is_symlink() or not group.is_dir(follow_symlinks=False):
-            continue
-        try:
-            candidates = list(os.scandir(group.path))
-        except OSError:
-            continue
-        for candidate in candidates:
-            if candidate.name.startswith(".") or candidate.is_symlink() or not candidate.is_dir(follow_symlinks=False):
+        visible = []
+    names = {entry.name for entry in visible}
+    return names == {"src", "output"} and all(
+        entry.is_dir(follow_symlinks=False) and not entry.is_symlink() for entry in visible
+    )
+
+
+def scan_projects(preferences):
+    patterns, legacy_base = configured_folders(preferences)
+    projects = []
+    seen_paths = set()
+    legacy_pattern = os.path.abspath(legacy_base + "/*/*")
+
+    for source_index, pattern in enumerate(patterns):
+        has_glob = glob.has_magic(pattern)
+        matches = glob.glob(pattern) if has_glob else [pattern]
+        for match in sorted(matches, key=str.casefold):
+            if not os.path.isdir(match) or os.path.islink(match) or not os.access(match, os.R_OK | os.X_OK):
                 continue
-            if not os.access(candidate.path, os.R_OK | os.X_OK):
+            root = os.path.realpath(os.path.abspath(match))
+            if root in seen_paths:
                 continue
-            try:
-                visible = [entry for entry in os.scandir(candidate.path) if not entry.name.startswith(".")]
-            except OSError:
-                visible = []
-            names = {entry.name for entry in visible}
-            is_split_layout = names == {"src", "output"} and all(
-                entry.is_dir(follow_symlinks=False) and not entry.is_symlink() for entry in visible
-            )
-            root = os.path.abspath(candidate.path)
+            seen_paths.add(root)
+            parent = Path(root).parent.name if has_glob else ""
+            project = Path(root).name
+            legacy_id = parent + "/" + project if os.path.abspath(pattern) == legacy_pattern else ""
+            is_split_layout = split_layout(root)
             projects.append({
-                "id": group.name + "/" + candidate.name,
-                "group": group.name,
-                "project": candidate.name,
+                "id": "path:" + root,
+                "legacyId": legacy_id,
+                "group": parent,
+                "project": project,
                 "rootPath": root,
                 "launchPath": os.path.join(root, "src") if is_split_layout else root,
                 "opens": "src" if is_split_layout else "",
+                "sourceOrder": source_index,
             })
-    return sorted(projects, key=lambda item: (item["group"].casefold(), item["project"].casefold()))
+    return sorted(projects, key=lambda item: (item["sourceOrder"], item["group"].casefold(), item["project"].casefold()))
 
 
 def editor_label(command):
@@ -190,15 +206,37 @@ def prune_history(history, project_ids):
     return changed
 
 
+def migrate_legacy_history(history, projects):
+    entries = history.get("entries")
+    if not isinstance(entries, dict):
+        return
+    claims = {}
+    for project in projects:
+        legacy_id = project.get("legacyId")
+        if legacy_id:
+            claims.setdefault(legacy_id, []).append(project["id"])
+    for legacy_id, project_ids in claims.items():
+        if len(project_ids) != 1 or legacy_id not in entries:
+            continue
+        project_id = project_ids[0]
+        if project_id not in entries:
+            entries[project_id] = entries[legacy_id]
+        del entries[legacy_id]
+
+
 def snapshot():
     config_path, history_path = paths()
     preferences, config_problem = read_json(config_path, {"version": VERSION, "editor": "default", "dimBackdrop": False})
     if config_problem:
         return error(config_problem)
-    projects = scan_projects()
+    try:
+        projects = scan_projects(preferences)
+    except ValueError as exc:
+        return error(str(exc))
     ids = {project["id"] for project in projects}
 
     def update(history):
+        migrate_legacy_history(history, projects)
         prune_history(history, ids)
         return history
 
