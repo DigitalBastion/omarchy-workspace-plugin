@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Filesystem and durable state helper for Workspace Opener.
+
+The QML shell sends one JSON object on stdin and receives one JSON object on
+stdout. Diagnostics are intentionally reserved for stderr.
+"""
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+VERSION = 1
+APP = "workspace-opener"
+
+
+def xdg_path(variable, fallback):
+    return Path(os.environ.get(variable) or fallback) / "omarchy" / APP
+
+
+def paths():
+    home = Path(os.environ.get("HOME") or Path.home())
+    return (
+        xdg_path("XDG_CONFIG_HOME", str(home / ".config")) / "config.json",
+        xdg_path("XDG_STATE_HOME", str(home / ".local" / "state")) / "history.json",
+    )
+
+
+def error(message):
+    return {"version": VERSION, "error": message}
+
+
+def read_json(path, default):
+    if not path.exists():
+        return default, ""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return default, "Cannot read " + str(path) + ": " + str(exc)
+    if not isinstance(value, dict) or value.get("version", VERSION) != VERSION:
+        return default, "Unsupported data in " + str(path)
+    return value, ""
+
+
+def atomic_write(path, value):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    descriptor, temporary = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def locked_update(path, mutate):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with open(lock_path, "a+", encoding="utf-8") as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        data, problem = read_json(path, {"version": VERSION, "entries": {}, "sequence": 0})
+        if problem:
+            return None, problem
+        result = mutate(data)
+        atomic_write(path, data)
+        return result, ""
+
+
+def scan_projects():
+    base = Path(os.environ.get("WORKSPACE_OPENER_PROJECTS") or Path.home() / "Projects")
+    projects = []
+    try:
+        groups = list(os.scandir(base))
+    except OSError:
+        return projects
+    for group in groups:
+        if group.name.startswith(".") or group.is_symlink() or not group.is_dir(follow_symlinks=False):
+            continue
+        try:
+            candidates = list(os.scandir(group.path))
+        except OSError:
+            continue
+        for candidate in candidates:
+            if candidate.name.startswith(".") or candidate.is_symlink() or not candidate.is_dir(follow_symlinks=False):
+                continue
+            if not os.access(candidate.path, os.R_OK | os.X_OK):
+                continue
+            try:
+                visible = [entry for entry in os.scandir(candidate.path) if not entry.name.startswith(".")]
+            except OSError:
+                visible = []
+            names = {entry.name for entry in visible}
+            is_split_layout = names == {"src", "output"} and all(
+                entry.is_dir(follow_symlinks=False) and not entry.is_symlink() for entry in visible
+            )
+            root = os.path.abspath(candidate.path)
+            projects.append({
+                "id": group.name + "/" + candidate.name,
+                "group": group.name,
+                "project": candidate.name,
+                "rootPath": root,
+                "launchPath": os.path.join(root, "src") if is_split_layout else root,
+                "opens": "src" if is_split_layout else "",
+            })
+    return sorted(projects, key=lambda item: (item["group"].casefold(), item["project"].casefold()))
+
+
+def prune_history(history, project_ids):
+    entries = history.get("entries")
+    if not isinstance(entries, dict):
+        history["entries"] = {}
+        return True
+    changed = False
+    for project_id in list(entries):
+        if project_id not in project_ids:
+            del entries[project_id]
+            changed = True
+    return changed
+
+
+def snapshot():
+    config_path, history_path = paths()
+    preferences, config_problem = read_json(config_path, {"version": VERSION, "editor": "code", "dimBackdrop": False})
+    if config_problem:
+        return error(config_problem)
+    projects = scan_projects()
+    ids = {project["id"] for project in projects}
+
+    def update(history):
+        prune_history(history, ids)
+        return history
+
+    history, history_problem = locked_update(history_path, update)
+    if history_problem:
+        return error(history_problem)
+    return {"version": VERSION, "projects": projects, "preferences": preferences, "history": history}
+
+
+def mutate_history(request):
+    _, history_path = paths()
+    action = request.get("action")
+    project_id = request.get("id")
+    if not isinstance(project_id, str) or not project_id:
+        return error("A project id is required")
+
+    def update(history):
+        entries = history.setdefault("entries", {})
+        if not isinstance(entries, dict):
+            history["entries"] = entries = {}
+        sequence = int(history.get("sequence", 0))
+        entry = entries.get(project_id, {})
+        if action == "record":
+            sequence += 1
+            history["sequence"] = sequence
+            entry["count"] = max(0, int(entry.get("count", 0))) + 1
+            entry["lastLaunchSeq"] = sequence
+            entry["lastOpenedAt"] = datetime.now(timezone.utc).isoformat()
+            entry.pop("dismissed", None)
+            entries[project_id] = entry
+        elif action == "dismiss":
+            section = request.get("section")
+            if section not in ("Recent", "Most Used"):
+                raise ValueError("Unknown history section")
+            dismissed = entry.setdefault("dismissed", {})
+            dismissed["recent" if section == "Recent" else "mostUsed"] = int(entry.get("lastLaunchSeq", sequence))
+            entries[project_id] = entry
+        else:
+            raise ValueError("Unknown history action")
+        return history
+
+    try:
+        history, problem = locked_update(history_path, update)
+    except (TypeError, ValueError) as exc:
+        return error(str(exc))
+    if problem:
+        return error(problem)
+    return {"version": VERSION, "history": history}
+
+
+def terminal_name():
+    try:
+        result = subprocess.run(["xdg-terminal-exec", "--print-path"], capture_output=True, text=True, check=True, timeout=2)
+        desktop = Path(result.stdout.strip())
+        for line in desktop.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Name="):
+                return {"version": VERSION, "name": line[5:].strip() or "Default terminal"}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {"version": VERSION, "name": "Default terminal"}
+
+
+def main():
+    action = sys.argv[1] if len(sys.argv) == 2 else ""
+    try:
+        request = json.loads(sys.stdin.readline())
+        if not isinstance(request, dict):
+            raise ValueError("Request must be an object")
+    except (ValueError, json.JSONDecodeError) as exc:
+        print(json.dumps(error("Invalid request: " + str(exc))), flush=True)
+        return 2
+    if action == "snapshot": response = snapshot()
+    elif action == "history": response = mutate_history(request)
+    elif action == "terminal-name": response = terminal_name()
+    else: response = error("Unknown action")
+    print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
+    return 0 if "error" not in response else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

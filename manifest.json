@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.digitalbastion.workspace-opener",
+  "name": "Workspace Opener",
+  "version": "1.0.0",
+  "author": "Martynas Zilinskas",
+  "license": "MIT",
+  "description": "Open projects from ~/Projects in VS Code, Cursor, or the default terminal.",
+  "kinds": ["menu"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "menu": "WorkspaceOpener.qml"
+  }
+}
