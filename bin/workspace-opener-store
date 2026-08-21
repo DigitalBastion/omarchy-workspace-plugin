@@ -9,6 +9,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,7 @@ from datetime import datetime, timezone
 
 VERSION = 1
 APP = "workspace-opener"
+EDITOR_IDS = ("default", "code", "cursor")
 
 
 def xdg_path(variable, fallback):
@@ -120,6 +122,61 @@ def scan_projects():
     return sorted(projects, key=lambda item: (item["group"].casefold(), item["project"].casefold()))
 
 
+def editor_label(command):
+    name = Path(command).name.lower()
+    return {
+        "code": "VS Code",
+        "cursor": "Cursor",
+        "nvim": "Neovim",
+        "vim": "Vim",
+        "nano": "Nano",
+        "micro": "Micro",
+        "hx": "Helix",
+        "helix": "Helix",
+    }.get(name, Path(command).name or "Omarchy default")
+
+
+def default_editor_choice():
+    command = "nvim"
+    try:
+        result = subprocess.run(["omarchy-default-editor"], capture_output=True, text=True, check=True, timeout=2)
+        candidate = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+        if candidate:
+            command = candidate
+    except (OSError, subprocess.SubprocessError):
+        pass
+    executable = shutil.which(command) or command
+    return {"id": "default", "label": editor_label(command), "executable": os.path.realpath(executable)}
+
+
+def editor_choices(preferences):
+    raw = preferences.get("editors", ["default", "code", "cursor"])
+    requested = raw if isinstance(raw, list) else []
+    ids = []
+    for value in requested:
+        editor_id = str(value)
+        if editor_id in EDITOR_IDS and editor_id not in ids:
+            ids.append(editor_id)
+    if not ids:
+        ids = ["default"]
+
+    choices_by_id = {
+        "code": {"id": "code", "label": "VS Code", "executable": os.path.realpath(shutil.which("code") or "code")},
+        "cursor": {"id": "cursor", "label": "Cursor", "executable": os.path.realpath(shutil.which("cursor") or "cursor")},
+    }
+    if "default" in ids:
+        choices_by_id["default"] = default_editor_choice()
+    choices = []
+    executables = set()
+    for editor_id in ids:
+        choice = choices_by_id[editor_id]
+        if choice["executable"] in executables:
+            continue
+        executables.add(choice["executable"])
+        choices.append({"id": choice["id"], "label": choice["label"]})
+    return choices or [{"id": "default", "label": "Omarchy default"}]
+
+
 def prune_history(history, project_ids):
     entries = history.get("entries")
     if not isinstance(entries, dict):
@@ -135,7 +192,7 @@ def prune_history(history, project_ids):
 
 def snapshot():
     config_path, history_path = paths()
-    preferences, config_problem = read_json(config_path, {"version": VERSION, "editor": "code", "dimBackdrop": False})
+    preferences, config_problem = read_json(config_path, {"version": VERSION, "editor": "default", "dimBackdrop": False})
     if config_problem:
         return error(config_problem)
     projects = scan_projects()
@@ -148,7 +205,13 @@ def snapshot():
     history, history_problem = locked_update(history_path, update)
     if history_problem:
         return error(history_problem)
-    return {"version": VERSION, "projects": projects, "preferences": preferences, "history": history}
+    return {
+        "version": VERSION,
+        "projects": projects,
+        "preferences": preferences,
+        "editorChoices": editor_choices(preferences),
+        "history": history,
+    }
 
 
 def mutate_history(request):

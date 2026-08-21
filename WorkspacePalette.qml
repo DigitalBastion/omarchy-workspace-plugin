@@ -24,6 +24,7 @@ Item {
     property int projectCount: -1         // -1 derives from allProjects.length.
     property int shownCount: -1           // Set when count differs from rendered rows.
     property string editorLabel: "VS Code"
+    property bool editorToggleAvailable: false
     property string terminalLabel: "Default terminal"
     property bool dimBackdrop: false      // Reserved configuration; off by default.
 
@@ -282,14 +283,14 @@ Item {
                         color: root.selectedBackground
                         border.color: root.selectedBorder
                         border.width: Math.max(1, Style.space(1))
-                        Accessible.name: "Active editor: " + root.editorLabel + ". Press Control E to change editor."
+                        Accessible.name: root.editorToggleAvailable ? "Active editor: " + root.editorLabel + ". Press Control E to change editor." : "Active editor: " + root.editorLabel
 
                         Text {
                             id: editorBadgeLabel
                             anchors.fill: parent
                             anchors.leftMargin: Style.spacing.controlPaddingX
                             anchors.rightMargin: Style.spacing.controlPaddingX
-                            text: root.editorLabel + " · Ctrl+E"
+                            text: root.editorLabel + (root.editorToggleAvailable ? " · Ctrl+E" : "")
                             color: root.selectedText
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -452,7 +453,7 @@ Item {
                             anchors.right: projectCounter.left
                             anchors.rightMargin: Style.spacing.md
                             anchors.verticalCenter: parent.verticalCenter
-                            text: "Enter open · Ctrl+E editor · Ctrl+T terminal · Ctrl+R refresh" + (root.currentItem && root.currentItem.deletable ? " · Del remove" : "")
+                            text: "Enter open" + (root.editorToggleAvailable ? " · Ctrl+E editor" : "") + " · Ctrl+T terminal · Ctrl+R refresh" + (root.currentItem && root.currentItem.deletable ? " · Del remove" : "")
                             color: root.foreground
                             opacity: 0.46
                             font.family: root.fontFamily

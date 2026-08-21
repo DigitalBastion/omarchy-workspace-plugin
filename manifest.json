@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "Martynas Zilinskas",
   "license": "MIT",
-  "description": "Open projects from ~/Projects in VS Code, Cursor, or the default terminal.",
+  "description": "Open projects from ~/Projects in the Omarchy default editor, VS Code, Cursor, or the default terminal.",
   "kinds": ["menu"],
   "keepLoaded": true,
   "entryPoints": {

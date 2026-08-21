@@ -17,8 +17,8 @@ bind = SUPER, P, exec, omarchy-shell shell toggle io.github.digitalbastion.works
 ## Usage
 
 - Type to fuzzy-filter projects. The initial view has Recent, Most Used, and Other Projects; each project appears in one section only.
-- `Up` / `Down` select; `Enter` or a single click opens the selected project in a new window of the current editor.
-- `Ctrl+E` switches VS Code and Cursor for this opening.
+- `Up` / `Down` select; `Enter` or a single click opens the selected project in the current editor.
+- `Ctrl+E` cycles the configured editor choices for this opening. It is hidden when only one editor is configured.
 - `Ctrl+T` opens the selected project in the configured default terminal.
 - `Delete` removes an item from its current Recent or Most Used section until it is launched again.
 - `Ctrl+R` rescans projects; `Escape` clears a filter, then closes the menu.
@@ -32,12 +32,13 @@ Create `$XDG_CONFIG_HOME/omarchy/workspace-opener/config.json` (normally `~/.con
 ```json
 {
   "version": 1,
-  "editor": "cursor",
+  "editor": "default",
+  "editors": ["default", "code", "cursor"],
   "dimBackdrop": true
 }
 ```
 
-`editor` is either `code` (the default) or `cursor`. `dimBackdrop` defaults to `false`.
+`editor` selects the initially active editor. `editors` is the ordered set Ctrl+E cycles; use one item to disable switching. Valid values are `default` (the default, launched through `omarchy-launch-editor`), `code`, and `cursor`. The displayed default label resolves from `omarchy-default-editor`: for example, VS Code, Cursor, or Neovim. Duplicate resolved choices are hidden. `dimBackdrop` defaults to `false`.
 
 Operational usage state is stored separately at `$XDG_STATE_HOME/omarchy/workspace-opener/history.json` (normally `~/.local/state/omarchy/workspace-opener/history.json`). Python 3 is the only runtime dependency; it is used from the standard library only.
 

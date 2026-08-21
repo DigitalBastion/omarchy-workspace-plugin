@@ -14,7 +14,8 @@ Item {
             entries: {},
             sequence: 0
         })
-    property string editor: "code"
+    property string editor: "default"
+    property var editorChoices: []
     property string terminalName: "Default terminal"
     property int snapshotSerial: 0
     property var pendingRequests: []
@@ -79,7 +80,14 @@ Item {
                 entries: {},
                 sequence: 0
             });
-        editor = response.preferences && response.preferences.editor === "cursor" ? "cursor" : "code";
+        editorChoices = Array.isArray(response.editorChoices) && response.editorChoices.length > 0 ? response.editorChoices : [
+            {
+                id: "default",
+                label: "Omarchy default"
+            }
+        ];
+        var configuredEditor = response.preferences ? String(response.preferences.editor || "default") : "default";
+        editor = editorChoice(configuredEditor) ? configuredEditor : String(editorChoices[0].id);
         palette.dimBackdrop = response.preferences && response.preferences.dimBackdrop === true;
         palette.statusMessage = "";
         render();
@@ -120,13 +128,32 @@ Item {
         palette.projectCount = projects.length;
         palette.shownCount = views.shownCount;
         palette.hiddenCount = views.hiddenCount;
-        palette.editorLabel = editor === "cursor" ? "Cursor" : "VS Code";
+        var choice = editorChoice(editor);
+        palette.editorLabel = choice ? String(choice.label) : "Omarchy default";
+        palette.editorToggleAvailable = editorChoices.length > 1;
         palette.setProjectData(views.recent, views.mostUsed, views.allProjects, views.searchResults);
     }
 
     function cycleEditor() {
-        editor = editor === "code" ? "cursor" : "code";
+        if (editorChoices.length < 2)
+            return;
+        var currentIndex = 0;
+        for (var index = 0; index < editorChoices.length; index++) {
+            if (String(editorChoices[index].id) === editor) {
+                currentIndex = index;
+                break;
+            }
+        }
+        editor = String(editorChoices[(currentIndex + 1) % editorChoices.length].id);
         render();
+    }
+
+    function editorChoice(id) {
+        for (var index = 0; index < editorChoices.length; index++) {
+            if (String(editorChoices[index].id) === id)
+                return editorChoices[index];
+        }
+        return null;
     }
 
     function launch(project, terminal) {
@@ -134,7 +161,13 @@ Item {
             return;
         pendingLaunch = project;
         launcherStarted = false;
-        launcherProc.command = terminal ? ["xdg-terminal-exec", "--dir=" + String(project.launchPath)] : ["uwsm", "app", "--", editor === "cursor" ? "cursor" : "code", "--new-window", String(project.launchPath)];
+        if (terminal) {
+            launcherProc.command = ["xdg-terminal-exec", "--dir=" + String(project.launchPath)];
+        } else if (editor === "default") {
+            launcherProc.command = ["omarchy-launch-editor", String(project.launchPath)];
+        } else {
+            launcherProc.command = ["uwsm", "app", "--", editor, "--new-window", String(project.launchPath)];
+        }
         palette.close();
         launcherProc.running = true;
     }

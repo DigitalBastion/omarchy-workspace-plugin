@@ -51,6 +51,9 @@ class StoreTests(unittest.TestCase):
         (self.projects / "Acme" / ".ignored").mkdir()
 
         _, response = self.invoke("snapshot")
+        self.assertEqual(response["preferences"]["editor"], "default")
+        self.assertGreaterEqual(len(response["editorChoices"]), 1)
+        self.assertEqual(response["editorChoices"][0]["id"], "default")
         items = {item["id"]: item for item in response["projects"]}
         self.assertEqual(set(items), {"Acme/Backend", "Acme/Website", "DigitalBastion/Plugin"})
         self.assertEqual(items["Acme/Backend"]["launchPath"], str(split))
@@ -87,6 +90,13 @@ class StoreTests(unittest.TestCase):
         _, response = self.invoke("snapshot")
         self.assertIn("error", response)
         self.assertEqual(history.read_text(encoding="utf-8"), "not json")
+
+    def test_editor_choices_follow_configured_order(self):
+        config = self.home / "config" / "omarchy" / "workspace-opener" / "config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"version": 1, "editor": "cursor", "editors": ["cursor"]}), encoding="utf-8")
+        _, response = self.invoke("snapshot")
+        self.assertEqual(response["editorChoices"], [{"id": "cursor", "label": "Cursor"}])
 
 
 if __name__ == "__main__":
