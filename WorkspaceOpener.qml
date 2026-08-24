@@ -21,19 +21,45 @@ Item {
     property var pendingRequests: []
     property var pendingLaunch: null
     property bool launcherStarted: false
+    // The first scan may take long enough to be noticeable. Keep the panel hidden
+    // briefly so it can arrive populated, but never delay opening beyond this cap.
+    property bool initialRevealPending: false
     readonly property string helperPath: decodeURIComponent(String(Qt.resolvedUrl("bin/workspace-opener-store")).replace("file://", ""))
 
     function open(_payloadJson) {
+        if (initialRevealPending)
+            return;
+
         opened = true;
         palette.statusMessage = "";
         palette.setQuery("");
-        palette.open();
-        refresh();
+        if (!palette.opened) {
+            palette.setProjectData([], [], [], []);
+            palette.projectCount = 0;
+            palette.shownCount = 0;
+            palette.hiddenCount = 0;
+            initialRevealPending = true;
+            refresh();
+            initialRevealTimer.start();
+        } else {
+            refresh();
+        }
         enqueue("terminal-name", {});
     }
 
     function close() {
+        initialRevealTimer.stop();
+        initialRevealPending = false;
+        opened = false;
         palette.close();
+    }
+
+    function revealInitialPalette() {
+        if (!opened || !initialRevealPending)
+            return;
+        initialRevealPending = false;
+        initialRevealTimer.stop();
+        palette.open();
     }
 
     function refresh() {
@@ -73,24 +99,25 @@ Item {
         palette.loading = false;
         if (response.error) {
             palette.statusMessage = response.error;
-            return;
+        } else {
+            projects = Array.isArray(response.projects) ? response.projects : [];
+            history = response.history || ({
+                    entries: {},
+                    sequence: 0
+                });
+            editorChoices = Array.isArray(response.editorChoices) && response.editorChoices.length > 0 ? response.editorChoices : [
+                {
+                    id: "default",
+                    label: "Omarchy default"
+                }
+            ];
+            var configuredEditor = response.preferences ? String(response.preferences.editor || "default") : "default";
+            editor = editorChoice(configuredEditor) ? configuredEditor : String(editorChoices[0].id);
+            palette.dimBackdrop = response.preferences && response.preferences.dimBackdrop === true;
+            palette.statusMessage = "";
+            render();
         }
-        projects = Array.isArray(response.projects) ? response.projects : [];
-        history = response.history || ({
-                entries: {},
-                sequence: 0
-            });
-        editorChoices = Array.isArray(response.editorChoices) && response.editorChoices.length > 0 ? response.editorChoices : [
-            {
-                id: "default",
-                label: "Omarchy default"
-            }
-        ];
-        var configuredEditor = response.preferences ? String(response.preferences.editor || "default") : "default";
-        editor = editorChoice(configuredEditor) ? configuredEditor : String(editorChoices[0].id);
-        palette.dimBackdrop = response.preferences && response.preferences.dimBackdrop === true;
-        palette.statusMessage = "";
-        render();
+        revealInitialPalette();
     }
 
     function applyHistory(response) {
@@ -202,6 +229,13 @@ Item {
             });
         }
         onDismissed: root.opened = false
+    }
+
+    Timer {
+        id: initialRevealTimer
+        interval: 300
+        repeat: false
+        onTriggered: root.revealInitialPalette()
     }
 
     Process {

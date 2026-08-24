@@ -56,11 +56,14 @@ Item {
     signal dismissed
 
     function open() {
+        if (opened)
+            return;
         opened = true;
         selectedIndex = 0;
         rebuild();
         Qt.callLater(function () {
-            searchInput.forceActiveFocus();
+            if (root.opened)
+                searchInput.forceActiveFocus();
         });
     }
 
@@ -196,15 +199,24 @@ Item {
         BorderSurface {
             id: palette
             width: Math.min(root.paletteWidth, panel.width - Style.gapsOut * 2)
-            height: Math.min(implicitHeight, Math.min(root.maximumHeight, panel.height - Style.gapsOut * 2))
+            // Do not derive the card height from content.implicitHeight: the list
+            // viewport is one of that content's children, so doing so creates a
+            // sizing cycle in which a long ListView can escape the capped card.
+            height: Math.min(maximumPaletteHeight, contentTopInset + contentBottomInset + fixedContentHeight + listViewportHeight)
             anchors.horizontalCenter: parent.horizontalCenter
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.top: parent.top
+            anchors.topMargin: topOffset
             color: root.background
             radius: Style.cornerRadius
             borderSpec: Border.surfaceSpec("menu", "border", root.border, Math.max(1, Style.space(1)))
             padding: Style.spacing.panelPadding
 
-            implicitHeight: content.implicitHeight + contentTopInset + contentBottomInset
+            readonly property real topOffset: panel.height * 0.35
+            readonly property real maximumPaletteHeight: Math.max(0, Math.min(root.maximumHeight, panel.height - topOffset - Style.gapsOut))
+            readonly property real maximumContentHeight: Math.max(0, maximumPaletteHeight - contentTopInset - contentBottomInset)
+            readonly property real fixedContentHeight: searchArea.height + feedback.height + footer.implicitHeight + content.spacing * (feedback.visible ? 3 : 2)
+            readonly property real preferredListHeight: displayModel.count === 0 ? Style.space(64) : projectList.contentHeight
+            readonly property real listViewportHeight: Math.max(0, Math.min(preferredListHeight, maximumContentHeight - fixedContentHeight))
 
             // Consume clicks on unused card space so they cannot reach the dismiss area.
             MouseArea {
@@ -213,9 +225,10 @@ Item {
 
             Column {
                 id: content
-                anchors.fill: parent
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.topMargin: palette.contentTopInset
-                anchors.bottomMargin: palette.contentBottomInset
                 anchors.leftMargin: palette.contentLeftInset
                 anchors.rightMargin: palette.contentRightInset
                 spacing: Style.spacing.lg
@@ -337,9 +350,9 @@ Item {
 
                 Item {
                     width: parent.width
-                    // Bound against the screen, not palette.height: the palette's
-                    // implicit height is itself derived from this list.
-                    height: Math.max(Style.space(64), Math.min(projectList.contentHeight, Math.max(Style.space(64), panel.height - Style.gapsOut * 2 - searchInput.height - footer.implicitHeight - Style.spacing.lg * 2 - feedback.height - (feedback.visible ? Style.spacing.lg : 0) - palette.contentTopInset - palette.contentBottomInset)))
+                    // This is an explicit viewport, independent from the list's
+                    // content height. Overflow is clipped and scrollable.
+                    height: palette.listViewportHeight
 
                     ListView {
                         id: projectList
